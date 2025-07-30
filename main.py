@@ -1,37 +1,40 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import sqlite3
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import threading
+from routers import router, request_queue
+from background_worker import process_requests  # Assuming you modularize the background worker
+from contextlib import asynccontextmanager
 
-app = FastAPI()
-DB_PATH = "qa_feedback.db"
 
-class CommentUpdate(BaseModel):
-    comment: str
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: launch background worker
+    worker_thread = threading.Thread(target=process_requests, daemon=True)
+    worker_thread.start()
 
-class QAItem(BaseModel):
-    id: int
-    question: str
-    prediction: str
-    ground_truth: str
-    comment: str | None = None
+    yield  # App is running
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    # Shutdown: no special cleanup needed here unless you're managing resources
+    print("App is shutting down...")
 
-@app.get("/questions", response_model=list[QAItem])
-def get_questions():
-    conn = get_db_connection()
-    rows = conn.execute("SELECT * FROM qa_feedback LIMIT 10").fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+app = FastAPI(
+    title="Question Processing API",
+    version="1.0",
+    lifespan=lifespan
+)
 
-@app.post("/comment/{qa_id}")
-def update_comment(qa_id: int, update: CommentUpdate):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE qa_feedback SET comment = ? WHERE id = ?", (update.comment, qa_id))
-    conn.commit()
-    conn.close()
-    return {"message": "Comment updated"}
+# ✅ Middleware (CORS as example)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or restrict to frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ✅ Register router with common prefix
+app.include_router(router, prefix="/api")
+
+
+
+
